@@ -229,6 +229,7 @@ public final class RelayClient {
         logPrefix: String
     ) async throws {
         try await withCheckedThrowingContinuation { (continuation: CheckedContinuation<Void, Error>) in
+            let oneShotContinuation = OneShotRelayContinuation(continuation)
             var cancellable: AnyCancellable?
 
             cancellable = subscriptionResponsePublisher
@@ -242,6 +243,7 @@ public final class RelayClient {
                     receiveCompletion: { [unowned self] completion in
                         switch completion {
                         case .failure(let error):
+                            guard let continuation = oneShotContinuation.take() else { return }
                             cancellable?.cancel()
                             logger.debug("\(logPrefix) Relay request timeout for topics: \(topics)")
                             continuation.resume(throwing: error)
@@ -251,6 +253,7 @@ public final class RelayClient {
                         }
                     },
                     receiveValue: { [unowned self] (_, subscriptionIds) in
+                        guard let continuation = oneShotContinuation.take() else { return }
                         cancellable?.cancel()
                         logger.debug("\(logPrefix) Subscribed to topics: \(topics)")
 
@@ -376,5 +379,23 @@ public final class RelayClient {
                 }
             }
         }
+    }
+}
+
+final class OneShotRelayContinuation<Value>: @unchecked Sendable {
+    private let lock = NSLock()
+    private var continuation: CheckedContinuation<Value, Error>?
+
+    init(_ continuation: CheckedContinuation<Value, Error>) {
+        self.continuation = continuation
+    }
+
+    func take() -> CheckedContinuation<Value, Error>? {
+        lock.lock()
+        defer { lock.unlock() }
+
+        let continuation = continuation
+        self.continuation = nil
+        return continuation
     }
 }
