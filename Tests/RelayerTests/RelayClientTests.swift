@@ -77,4 +77,38 @@ final class RelayClientTests: XCTestCase {
         sut.unsubscribe(topic: topic) {_ in }
         XCTAssertTrue(dispatcher.sent)
     }
+
+    func testSubscriptionResponseContinuationCanOnlyBeTakenOnce() async throws {
+        let winnerCount = LockedCounter()
+
+        try await withCheckedThrowingContinuation { (continuation: CheckedContinuation<Void, Error>) in
+            let oneShotContinuation = OneShotRelayContinuation(continuation)
+
+            DispatchQueue.concurrentPerform(iterations: 100) { _ in
+                guard let continuation = oneShotContinuation.take() else { return }
+                winnerCount.increment()
+                continuation.resume()
+            }
+
+            XCTAssertEqual(winnerCount.value, 1)
+            XCTAssertNil(oneShotContinuation.take())
+        }
+    }
+}
+
+private final class LockedCounter: @unchecked Sendable {
+    private let lock = NSLock()
+    private var count = 0
+
+    var value: Int {
+        lock.lock()
+        defer { lock.unlock() }
+        return count
+    }
+
+    func increment() {
+        lock.lock()
+        count += 1
+        lock.unlock()
+    }
 }
